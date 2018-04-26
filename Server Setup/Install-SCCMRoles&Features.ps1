@@ -14,8 +14,12 @@ Twitter: @kmgamd
 http://www.sccmtst.com/
 #>
 
+PARAM(
+    [Parameter(Mandatory=$True,HelpMessage="Enter Location of .net 3.5 install files")]
+    [string]$DotNetSource
+)
+
 Get-Module servermanager
-$DotNetSource = Read-Host ".Net 3.5 Source file Location"
 
 Write-Host "Installing Web-Windows-Auth"
 Install-WindowsFeature Web-Windows-Auth

@@ -707,7 +707,7 @@ New-LogFile
 Get-ClientInstalled
 Get-DependentServices
 # This function is disabled by defuelt, Running a manual proccess to clean the temp folder too often is not supported by Microsoft
-Get-TempFiles
+#Get-TempFiles
 Get-ClientActionsStatus
 Get-WMIStatus
 Install-SCCMClient
