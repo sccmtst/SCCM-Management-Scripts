@@ -1,0 +1,20 @@
+Dell BIOS Flash Utility for WinPE
+http://en.community.dell.com/techcenter/enterprise-client/w/wiki/12237.64-bit-bios-installation-utility
+
+Dell Drive Cab Files 
+http://en.community.dell.com/techcenter/enterprise-client/w/wiki/2065.dell-command-deploy-driver-packs-for-enterprise-client-os-deployment
+
+Lenovo Deployment Recipe Card 
+https://support.lenovo.com/us/en/solutions/ht104042
+
+Ports used by SCCM
+https://technet.microsoft.com/en-us/library/bb632618.aspx
+
+Changing SCCM Package Source Location 
+https://blogs.technet.microsoft.com/cmpfekevin/2014/02/12/configuration-manager-powershell-changing-package-source-location-part-2/
+
+SCCM Queries
+https://www.sccmtst.com/2018/04/sccm-collection-queries.html
+
+Using TSGUI
+https://www.sccmtst.com/2018/01/sccm-task-sequence-gui-how-to-set-up-ts.html
