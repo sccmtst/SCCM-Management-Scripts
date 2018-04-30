@@ -6,7 +6,7 @@ SCCM client health check and repair
 This script will check components used by the SCCM client 
 and if an issue is found it will attempt to fix the issue.
 
-1. Looks to see if the the client is installed, if not it 
+1. Looks to see if the client is installed, if not it 
 will install the client from the specified location.
 
 2. Next the script will check the startup type and status 
@@ -18,16 +18,15 @@ of services needed for SCCM
 the SCCM name space is working. 
 
 5. If an issue is found that can be resolved by reinstalling 
-the SCCM client this will happen last. The scrip will also 
-look for any reaming client files and remove them to be sure 
-there are no corrupted files left behind. 
-
+the SCCM client this will happen last. The script will also 
+look for any remaining client files and remove them to be sure 
+there are no corrupted files left behind.
 
 .NOTES
 Created By: Kris Gross
 Contact: Krisgross@sccmtst.com
 Twitter: @kmgamd
-Version 1.0.1.1
+Version 1.1.2.2
 
 .LINK
 You can get updates to this script and others from here
@@ -37,6 +36,12 @@ http://www.sccmtst.com/
 ### Variables that can be changed ###
 # Location of the SCCM Client install files
 $SCCMClientLocation = ""
+#Managment Point Server
+$SMSMP = ""
+# Domain DNS Suffix 
+$DNSSUFFIX = ""
+# site code
+$SITECODE = ""
 # Log file the script writes to
 $LogFile = "$ENV:windir\SCCMClientHealthCheck.log"
 # Allows the log file to age for specified amount of days
@@ -49,13 +54,13 @@ $ScriptName = $MyInvocation.MyCommand.Name
 $Computername = $ENV:COMPUTERNAME
 ################################################
 
-# Clears log if its larger then 1MB or older then the specified amount of days # 
+# Clears log if its larger then 5MB or older then the specified amount of days # 
 function Get-LogFileSize
 {
 	$LogFileSize = (Get-Item -path $LogFile).Length
 	$LogFileAge = (Get-Item -Path $LogFile).CreationTime
 	$AcceptableDate = (Get-Date).AddDays(-"$LogAge")
-	If (($LogFileSize -ge 999999) -or ($LogFileAge -le $AcceptableDate)) 
+	If (($LogFileSize -ge 5000001) -or ($LogFileAge -le $AcceptableDate)) 
 	{
 		Remove-Item $LogFile -Force
 		$Global:LogCleaned = "True"
@@ -102,12 +107,29 @@ function Exit-Script()
     Exit $script:Returncode    
 }
 
+# Check workstation Compatibility
+function Check-Compatibility 
+{
+	Add-LogEntry "---------------------------" "1"
+	#Checking PowerShell Version
+	Add-LogEntry "Checking PowerShell Version" "1"
+	$PowerShellVersion = (Get-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\PowerShell\3\PowerShellEngine").PowerShellVersion
+	IF ($PowerShellVersion -le "5.1") 
+	{
+		Add-LogEntry "PowerShell Version: $PowerShellVersion" "1"
+		Add-LogEntry "ERROR: PowerShell Version is less then 5.1" "3"
+		Add-LogEntry "ACTION: Install Windows Management Framework 5.1" "1"
+		Exit-Script
+	}
+}
+
+
 # Check if SCCM Client is installed #
 Function Get-ClientInstalled
 {
 	Add-LogEntry "---------------------------" "1"
 	Add-LogEntry "Checking if SCCM Client is installed" "1"
-	If ((Get-WmiObject win32_Product | Where-Object Name -EQ "Configuration Manager Client") -and (Get-Service -Name ccmexec -ErrorAction SilentlyContinue))
+	If ((Get-WmiObject win32_Product | Where-Object Name -EQ "Configuration Manager Client") -and (Get-Service -Name ccmexec))
 	{
 		Add-LogEntry "SCCM Client is installed" "1"
 	}
@@ -181,7 +203,7 @@ Function Install-SCCMClient
 		$InstallClientScript = @"
 		@ECHO off
 		ECHO Installing the new client...Please Wait
-		%1\ccmsetup.exe SMSMP=it-cmmp.city.thornton.local DNSSUFFIX=city.thornton.local SMSSITECODE=CT1 CCMLOGLEVEL=0 CCMLOGMAXSIZE=16000000 CCMLOGMAXHISTORY=1 CCMDEBUGLOGGING=0 SMSCACHSIZE=25600
+		%1\ccmsetup.exe SMSMP=$SMSMP DNSSUFFIX=$DNSSUFFIX SMSSITECODE=$SITECODE CCMLOGLEVEL=0 CCMLOGMAXSIZE=16000000 CCMLOGMAXHISTORY=1 CCMDEBUGLOGGING=0 SMSCACHSIZE=25600
 		
 		:start
 		tasklist /FI "IMAGENAME eq ccmsetup.exe" | find /i "ccmsetup.exe" >> null
@@ -236,15 +258,15 @@ Function Get-DependentServices
 		{
 			Add-LogEntry "WARNING: CcmExec service needs to be set to Automatic" "2"
 			Add-LogEntry "Attempting to change start type to Automatic" "1"
-			Set-Service "CcmExec" -StartupType "Automatic"
-			IF ((Get-Service "CcmExec").StartType -ne "Automatic")
-			{
-				Add-LogEntry "ERROR: Could not change start type" "3"
+			try {
+				Set-Service "CcmExec" -StartupType "Automatic" -ErrorAction Stop
 			}
-			IF ((Get-Service "CcmExec").StartType -eq "Automatic")
-			{
-				Add-LogEntry "SUCCESS: CcmExec service start type was set to Automatic" "1"
+			catch {
+				Add-LogEntry "ERROR: $_" "3"
 			}
+			
+			IF ((Get-Service "CcmExec").StartType -ne "Automatic"){Add-LogEntry "ERROR: Could not change start type" "3"}
+			IF ((Get-Service "CcmExec").StartType -eq "Automatic"){Add-LogEntry "SUCCESS: CcmExec service start type was set to Automatic" "1"}
 		}
 		else 
 		{
@@ -255,16 +277,15 @@ Function Get-DependentServices
 		{
 			Add-LogEntry "WARNING: CCMExec service stopped" "2"
 			Add-LogEntry "Attempting to startng CCMExec service " "1"
-			Start-Service -Name CcmExec
+			try {
+				Start-Service -Name CcmExec -ErrorAction Stop
+			}
+			catch {
+				Add-LogEntry "ERROR: $_" "3"
+			}
 			start-Sleep -Seconds 10
-			if((Get-Service -Name "ccmexec").Status -eq "Stopped")
-			{
-				Add-LogEntry "ERROR: Could not start CCMExec service" "3"
-			}
-			if((Get-Service -Name "ccmexec").Status -ne "Stopped")
-			{
-				Add-LogEntry "SUCCESS: started CcmExec service"
-			}
+			if((Get-Service -Name "ccmexec").Status -eq "Stopped"){Add-LogEntry "ERROR: Could not start CCMExec service" "3"}
+			if((Get-Service -Name "ccmexec").Status -ne "Stopped"){Add-LogEntry "SUCCESS: started CcmExec service"}
 		}
 		Else 
 		{
@@ -278,15 +299,15 @@ Function Get-DependentServices
 	{
 		Add-LogEntry "WARNING: BITS service needs to be set to Automatic" "2"
 		Add-LogEntry "Attempting to change startup type to Automatic" "1"
-		Set-Service "BITS" -StartupType "Automatic"
-		IF ((Get-Service "BITS").StartType -ne "Automatic")
-		{
-			Add-LogEntry "ERROR: Could not change startup type" "3"
+		try {
+			Set-Service "BITS" -StartupType "Automatic" -ErrorAction Stop
 		}
-		IF ((Get-Service "BITS").StartType -eq "Automatic")
-		{
-			Add-LogEntry "SUCCESS: BITS service startup type was set to Automatic"
+		catch {
+			Add-LogEntry "ERROR: $_" "3"
 		}
+		
+		IF ((Get-Service "BITS").StartType -ne "Automatic"){Add-LogEntry "ERROR: Could not change startup type" "3"}
+		IF ((Get-Service "BITS").StartType -eq "Automatic"){Add-LogEntry "SUCCESS: BITS service startup type was set to Automatic"}
 	}
 	else 
 	{
@@ -298,16 +319,15 @@ Function Get-DependentServices
 	{
 		Add-LogEntry "WARNING: BITS service Stopped" "2"
 		Add-LogEntry "Attempting to start BITS service" "1"
-		Start-Service -Name "BITS"
+		try {
+			Start-Service -Name "BITS" -ErrorAction Stop
+		}
+		catch {
+			Add-LogEntry "ERROR: $_" "3"
+		}
 		start-Sleep -Seconds 10
-		if((Get-Service -Name "BITS").status -eq "Stopped")
-		{
-			Add-LogEntry "ERROR: Could not start BITS service" "3"
-		}
-		if((Get-Service -Name "BITS").status -ne "Stopped")
-		{
-			Add-LogEntry "SUCCESS: started BITS service" "1"
-		}
+		if((Get-Service -Name "BITS").status -eq "Stopped"){Add-LogEntry "ERROR: Could not start BITS service" "3"}
+		if((Get-Service -Name "BITS").status -ne "Stopped"){Add-LogEntry "SUCCESS: started BITS service" "1"}
 	}
 	else 
 	{
@@ -320,15 +340,15 @@ Function Get-DependentServices
 	{
 		Add-LogEntry "WARNING: Wuauserv service needs to be set to Manual" "2"
 		Add-LogEntry "Attempting to change start type to Manual" "1"
-		Set-Service "wuauserv" -StartupType "Manual"
-		IF ((Get-Service "wuauserv").StartType -ne "Manual")
-		{
-			Add-LogEntry "ERROR: Could not change start type" "3"
+		try {
+			Set-Service "wuauserv" -StartupType "Manual" -ErrorAction Stop
 		}
-		IF ((Get-Service "wuauserv").StartType -eq "Manual")
-		{
-			Add-LogEntry "SUCCESS: wuauserv service start type was set to Manual"
+		catch {
+			Add-LogEntry "ERROR: $_" "3"
 		}
+		start-Sleep -Seconds 10
+		IF ((Get-Service "wuauserv").StartType -ne "Manual"){Add-LogEntry "ERROR: Could not change start type" "3"}
+		IF ((Get-Service "wuauserv").StartType -eq "Manual"){Add-LogEntry "SUCCESS: wuauserv service start type was set to Manual"}
 	}
 	else 
 	{
@@ -341,15 +361,15 @@ Function Get-DependentServices
 	{
 		Add-LogEntry "WARNING: Winmgmt service needs to be set to Automatic" "2"
 		Add-LogEntry "Attempting to change start type to Automatic" "1"
-		Set-Service "Winmgmt" -StartupType "Automatic"
-		IF ((Get-Service "Winmgmt").StartType -ne "Automatic")
-		{
-			Add-LogEntry "ERROR: Could not change start type" "3"
+		try {
+			Set-Service "Winmgmt" -StartupType "Automatic" -ErrorAction Stop
 		}
-		IF ((Get-Service "Winmgmt").StartType -eq "Automatic")
-		{
-			Add-LogEntry "SUCCESS: Winmgmt service startup type set to Automatic"
+		catch {
+			Add-LogEntry "ERROR: $_" "3"
 		}
+		start-Sleep -Seconds 10
+		IF ((Get-Service "Winmgmt").StartType -ne "Automatic"){Add-LogEntry "ERROR: Could not change start type" "3"}
+		IF ((Get-Service "Winmgmt").StartType -eq "Automatic"){Add-LogEntry "SUCCESS: Winmgmt service startup type set to Automatic"}
 	}
 	else 
 	{
@@ -361,16 +381,15 @@ Function Get-DependentServices
 	{
 		Add-LogEntry "WARNING: Winmgmt service Stopped" "2"
 		Add-LogEntry "Attempting to start Winmgmt service" "1"
-		Start-Service -Name "Winmgmt"
+		try {
+			Start-Service -Name "Winmgmt" -ErrorAction Stop
+		}
+		catch {
+			Add-LogEntry "ERROR: $_" "3"
+		}
 		start-Sleep -Seconds 10
-		if((Get-Service -Name "Winmgmt").status -eq "Stopped")
-		{
-			Add-LogEntry "ERROR: Could not start Winmgmt service" "3"
-		}
-		if((Get-Service -Name "Winmgmt").status -ne "Stopped")
-		{
-			Add-LogEntry "SUCCESS: Winmgmt service started" "1"
-		}
+		if((Get-Service -Name "Winmgmt").status -eq "Stopped"){Add-LogEntry "ERROR: Could not start Winmgmt service" "3"}
+		if((Get-Service -Name "Winmgmt").status -ne "Stopped"){Add-LogEntry "SUCCESS: Winmgmt service started" "1"}
 	}
 	else 
 	{
@@ -383,15 +402,15 @@ Function Get-DependentServices
 	{
 		Add-LogEntry "WARNING: RemoteRegistry service needs to be set to Automatic" "2"
 		Add-LogEntry "Attempting to change startup type to Automatic" "1"
-		Set-Service "RemoteRegistry" -StartupType "Automatic"
-		IF ((Get-Service "RemoteRegistry").StartType -ne "Automatic")
-		{
-			Add-LogEntry "ERROR: Could not change start type" "3"
+		try {
+			Set-Service "RemoteRegistry" -StartupType "Automatic" -ErrorAction Stop
 		}
-		IF ((Get-Service "RemoteRegistry").StartType -eq "Automatic")
-		{
-			Add-LogEntry "SUCCESS: RemoteRegistry service start type set to Automatic"
+		catch {
+			Add-LogEntry "ERROR: $_" "3"
 		}
+		start-Sleep -Seconds 10
+		IF ((Get-Service "RemoteRegistry").StartType -ne "Automatic"){Add-LogEntry "ERROR: Could not change start type" "3"}
+		IF ((Get-Service "RemoteRegistry").StartType -eq "Automatic"){Add-LogEntry "SUCCESS: RemoteRegistry service start type set to Automatic"}
 	}
 	else 
 	{
@@ -403,16 +422,15 @@ Function Get-DependentServices
 	{
 		Add-LogEntry "WARNING: RemoteRegistry service Stopped" "2"
 		Add-LogEntry "Attempting to start RemoteRegistry service" "1"
-		Start-Service -Name "RemoteRegistry"
+		try {
+			Start-Service -Name "RemoteRegistry" -ErrorAction Stop
+		}
+		catch {
+			Add-LogEntry "ERROR: $_" "3"
+		}
 		start-Sleep -Seconds 10
-		if((Get-Service -Name "RemoteRegistry").status -eq "Stopped")
-		{
-			Add-LogEntry "ERROR: Could not start RemoteRegistry service" "3"
-		}
-		if((Get-Service -Name "RemoteRegistry").status -eq "Running")
-		{
-			Add-LogEntry "SUCCESS: started RemoteRegistry service" "1"
-		}
+		if((Get-Service -Name "RemoteRegistry").status -eq "Stopped"){Add-LogEntry "ERROR: Could not start RemoteRegistry service" "3"}
+		if((Get-Service -Name "RemoteRegistry").status -eq "Running"){Add-LogEntry "SUCCESS: started RemoteRegistry service" "1"}
 	}
 	else 
 	{
@@ -476,38 +494,49 @@ Function Get-WMIStatus
 {
 	Add-LogEntry "---------------------------" "1"
 	Add-LogEntry "Checking status of WMI" "1"
-	IF ($Global:InstallClient -eq "True")
+	
+	If ($Global:InstallClient -ne "True")
 	{
 		Add-LogEntry "SCCM Client set to be reinstalled, will not check SCCM WMI" "1"
-		try
-		{
+		$WMIStatus = "Good"
+		try {
 			Get-WmiObject win32_ComputerSystem -ErrorAction Stop
+		}
+		catch {
+			Add-LogEntry "ERROR:An Issue with win32_ComputerSystem occured;  $_" "3"
+			$WMIStatus = "Bad"
+		}
+		
+		try {
 			Get-WmiObject win32_OperatingSystem -ErrorAction Stop
+		}
+		catch {
+			Add-LogEntry "ERROR:An Issue with win32_OperatingSystem occured;  $_" "3"
+			$WMIStatus = "Bad"
+		}
+			
+		try {
 			Get-WmiObject win32_Service -ErrorAction stop
-			$WMIStatus = "Good"
 		}
-		Catch
+		catch {
+			Add-LogEntry "ERROR:An Issue with win32_Service occured;  $_" "3"
+			$WMIStatus = "Bad"
+		}	
+	
+		IF ($WMIStatus -eq "Good")
 		{
-			Add-LogEntry "ERROR: $_" "3"
+			Add-LogEntry "Checking system and SCCM components of WMI" "1"
+			try 
+			{
+				Get-WmiObject -Namespace root\ccm -Class sms_client -ErrorAction Stop
+				$WMIStatus = "Good"
+			}
+			catch 
+			{
+				Add-LogEntry "ERROR:An issue with sms_client WMI occured; $_" "3"	
+			}
 		}
 	}
-	IF ($Global:InstallClient -ne "True")
-	{
-		Add-LogEntry "Checking system and SCCM components of WMI" "1"
-		try 
-		{
-			Get-WmiObject win32_ComputerSystem -ErrorAction Stop
-			Get-WmiObject win32_OperatingSystem -ErrorAction Stop
-			Get-WmiObject win32_Service -ErrorAction Stop
-			Get-WmiObject -Namespace root\ccm -Class sms_client -ErrorAction Stop
-			$WMIStatus = "Good"
-		}
-		catch 
-		{
-			Add-LogEntry "ERROR: $_" "3"	
-		}
-	}
-
 	if($WMIStatus -eq "Good")
 	{
 		Add-LogEntry "WMI Seems to be working correctly" "1"
@@ -519,53 +548,17 @@ Function Get-WMIStatus
 		Add-LogEntry "Attempting to repair WMI" "1"
 		$DependentServices = Get-Service winmgmt -DependentServices | Where-Object Status -eq "Running"
 
-		IF ((Get-Service CcmExec).Status -eq "Running") 
-		{
-			Add-LogEntry "Attempting to stop CcmExec service" "1"
-			Stop-Service "CcmExec" -Force -ErrorAction SilentlyContinue
-			Start-Sleep -Seconds 10
-			IF ((Get-Service CcmExec).Status -eq "Running") 
-			{
-				Add-LogEntry "ERROR: Could not stop CcmExec service" "3"
-				Add-LogEntry "It is not recommened to continue with WMI repair proccess, Stopping Script" "2"
-				Add-LogEntry "ACTION: try to stop SMS Agent Host service manully if you cannont uninstall the SCCM client and run the script again" "2"
-				Exit-Script
-			}
-		}
-
-		IF ((Get-Service Winmgmt).Status -eq "Running") 
-		{
-			Add-LogEntry "Attempting to stop winmgmt service" "1"
-			Stop-Service "winmgmt" -Force -ErrorAction SilentlyContinue
-			Start-Sleep -Seconds 10
-			IF ((Get-Service Winmgmt).Status -eq "Running") 
-			{
-				Add-LogEntry "ERROR: Could not stop winmgmt service" "3"
-				Add-LogEntry "It is not recommened to continue with WMI repair proccess, Stopping Script" "2"
-				Add-LogEntry "ACTION: Try to stop the Windows Management Instrumentation service manully if you cannont the computer will need to be reimaged"
-				Exit-Script
-			}
-		}
-
-		IF ((Get-Service wmiApSrv).Status -eq "Running") 
-		{
-			Add-LogEntry "Attempting to stop wmiApSrv service" "1"
-			Stop-Service "wmiApSrv" -Force -ErrorAction SilentlyContinue
-			Start-Sleep -Seconds 10
-			IF ((Get-Service wmiApSrv).Status -eq "Running") 
-			{
-				Add-LogEntry "ERROR: Could not stop wmiApSrv service" "3"
-				Add-LogEntry "It is not recommened to continue with WMI repair proccess, Stopping Script" "2"
-				Exit-Script
-			}
-		}
-
 		Foreach ($Service in $DependentServices)
 		{
 			IF ((Get-Service $Service).Status -eq "Running")
 			{
 				Add-LogEntry "Attempting to stop $Service service" "1"
-				Stop-Service "$Service" -Force -ErrorAction
+				try {
+					Stop-Service "$Service" -Force -ErrorAction Stop
+				}
+				catch {
+					Add-LogEntry "Error: $_" "3"
+				}
 				Start-Sleep 10
 				IF ((Get-Service $Service).Status -eq "Running") 
 				{
@@ -576,14 +569,103 @@ Function Get-WMIStatus
 			}
 		}
 
+		IF ((Get-Service Winmgmt).Status -eq "Running") 
+		{
+			Add-LogEntry "Attempting to stop winmgmt service" "1"
+			try {
+				Stop-Service "winmgmt" -Force -ErrorAction Stop
+			}
+			catch {
+				Add-LogEntry "Error: $_" "3"
+			}
+			Start-Sleep -Seconds 10
+			IF ((Get-Service Winmgmt).Status -eq "Running") 
+			{
+				Add-LogEntry "ERROR: Could not stop winmgmt service" "3"
+				Add-LogEntry "It is not recommened to continue with WMI repair proccess, Stopping Script" "2"
+				Add-LogEntry "ACTION: Try to stop the Windows Management Instrumentation service manully if you cannont the computer will need to be reimaged"
+				Exit-Script
+			}
+		}
+		
+
+		IF ((Get-Service CcmExec).Status -eq "Running") 
+		{
+			Add-LogEntry "Attempting to stop CcmExec service" "1"
+			try {
+				Stop-Service "CcmExec" -Force -ErrorAction Stop
+			}
+			catch {
+				
+			}
+			Start-Sleep -Seconds 10
+			IF ((Get-Service CcmExec).Status -eq "Running") 
+			{
+				Add-LogEntry "ERROR: Could not stop CcmExec service" "3"
+				Add-LogEntry "It is not recommened to continue with WMI repair proccess, Stopping Script" "2"
+				Add-LogEntry "ACTION: try to stop SMS Agent Host service manully if you cannont uninstall the SCCM client and run the script again" "2"
+				Exit-Script
+			}
+		}
+
+		IF ((Get-Service wmiApSrv).Status -eq "Running") 
+		{
+			Add-LogEntry "Attempting to stop wmiApSrv service" "1"
+			try {
+				Stop-Service "wmiApSrv" -Force -ErrorAction Stop
+			}
+			catch {
+				Add-LogEntry "Error: $_" "3"
+			}
+			Start-Sleep -Seconds 10
+			IF ((Get-Service wmiApSrv).Status -eq "Running") 
+			{
+				Add-LogEntry "ERROR: Could not stop wmiApSrv service" "3"
+				Add-LogEntry "It is not recommened to continue with WMI repair proccess, Stopping Script" "2"
+				Exit-Script
+			}
+		}
+
 		Add-LogEntry "All Services stopped, Repairing WMI" "1"
 		& ($ENV:SystemRoot+"\system32\wbem\winmgmt.exe") /resetrepository
+		If ($LASTEXITCODE -eq 1) {Add-LogEntry "ERROR:Could not run winmgmt.exe /resetrepository; $_" "3"}
 		& ($ENV:SystemRoot+"\system32\wbem\winmgmt.exe") /salvagerepository
+		If ($LASTEXITCODE -eq 1) {Add-LogEntry "ERROR:Could not run winmgmt.exe /salvagerepository; $_" "3"}
 		Add-LogEntry "Completed running the repaire process" "1"
 		Add-LogEntry "Attempting to restart services needed for WMI" "1"
 		
 		Add-LogEntry "Attempting to restart Winmgmt service" "1"
-		Start-Service "Winmgmt"
+		
+		Foreach ($Service in $DependentServices)
+		{
+			Add-LogEntry "Attempting to restart $Service service" "1"
+			try {
+				Start-Service $Service -ErrorAction Stop
+			}
+			catch {
+				Add-LogEntry "ERROR: $_" "3"
+			}
+			Start-Sleep -Seconds 5 
+			IF ((Get-Service "$Service").Status -eq "Stopped")
+			{
+				Add-LogEntry "ERROR: Could not restart $Service" "3"
+				Add-LogEntry "Attempting to restart $Service service in 10 seconds"
+				Start-Sleep -Seconds 10
+				Start-Service $Service
+				IF ((Get-Service "$Service").Status -eq "Running") {Add-LogEntry "SUCCESS: $Service service is now running" "1"}
+			}
+			else 
+			{
+				Add-LogEntry "SUCCESS: $Service service is now running" "1"
+			}
+		}
+
+		try {
+			Start-Service "Winmgmt" -ErrorAction Stop
+		}
+		catch {
+			Add-LogEntry "ERROR: $_" "3"
+		}
 		Start-Sleep -Seconds 5
 		IF ((Get-Service Winmgmt).Status -eq "Stopped") 
 		{
@@ -607,7 +689,12 @@ Function Get-WMIStatus
 		}
 
 		Add-LogEntry "Attempting to restart wmiApSrv service" "1"
-		Start-Service "wmiApSrv" 
+		try {
+			Start-Service "wmiApSrv" -ErrorAction Stop
+		}
+		catch {
+			Add-LogEntry "ERROR: $_" "3"
+		}
 		Start-Sleep -Seconds 5
 		IF ((Get-Service wmiApSrv).Status -eq "Stopped") 
 		{
@@ -626,7 +713,12 @@ Function Get-WMIStatus
 		}
 
 		Add-LogEntry "Attempting to restart WmiPrvSE service" "1"
-		Start-Service "WmiPrvSE"
+		try {
+			Start-Service "WmiPrvSE" -ErrorAction Stop
+		}
+		catch {
+			Add-LogEntry "ERROR: $_" "3"
+		}
 		Start-Sleep -Seconds 5
 		IF ((Get-Service WmiPrvSE).Status -eq "Stopped") 
 		{
@@ -641,24 +733,6 @@ Function Get-WMIStatus
 			Add-LogEntry "SUCCESS: WmiPrvSE service is now running" "1"
 		}
 
-		Foreach ($Service in $DependentServices)
-		{
-			Add-LogEntry "Attempting to restart $Service service" "1"
-			Start-Service $Service
-			Start-Sleep -Seconds 5 
-			IF ((Get-Service "$Service").Status -eq "Stopped")
-			{
-				Add-LogEntry "ERROR: Could not restart $Service" "3"
-				Add-LogEntry "Attempting to restart $Service service in 10 seconds"
-				Start-Sleep -Seconds 10
-				Start-Service $Service
-				IF ((Get-Service "$Service").Status -eq "Running") {Add-LogEntry "SUCCESS: $Service service is now running" "1"}
-			}
-			else 
-			{
-				Add-LogEntry "SUCCESS: $Service service is now running" "1"
-			}
-		}
 		$Global:InstallClient = "True"
 		try 
 		{
@@ -704,6 +778,7 @@ Function Get-TempFiles
 # If you need to only run part of the script comment out the functions here you dont need
 Get-LogFileSize
 New-LogFile
+Check-Compatibility
 Get-ClientInstalled
 Get-DependentServices
 # This function is disabled by defuelt, Running a manual proccess to clean the temp folder too often is not supported by Microsoft
