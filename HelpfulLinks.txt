@@ -18,3 +18,6 @@ https://www.sccmtst.com/2018/04/sccm-collection-queries.html
 
 Using TSGUI
 https://www.sccmtst.com/2018/01/sccm-task-sequence-gui-how-to-set-up-ts.html
+
+Setup Dell BIOS Password
+https://4sysops.com/archives/dell-bios-update-with-sccm-and-dell-command-configure/
