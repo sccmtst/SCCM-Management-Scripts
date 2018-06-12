@@ -2,8 +2,11 @@
 Be sure to change the $user and $Password
 #>
 
-$User = "LocalUser"
-$Password = "P@ssword1"
+PARAM(
+    $User,
+    $Password
+)
+
 
 $Computer = [ADSI]"WinNT://$Env:COMPUTERNAME,Computer"
 $LocalAdmin = $Computer.Create("User", $User)
