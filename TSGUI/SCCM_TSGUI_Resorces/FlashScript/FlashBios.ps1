@@ -1,34 +1,32 @@
 <#
 .SYNOPSIS
-Updates the BIOS for Dell Computers
+Flashs a new BIOS to a Dell Device, Ment to be used in a SCCM Task Sequence
 
 .DESCRIPTION
-Flashes the BIOS for dell computers using the Flash64W.exe utility
+The script will compair the version the BIOS to the version of the exe and perform the appropriate action.
+
+1. Create a folder in your content Library called DellBIOS
+2. Create a folder for each comeputer model you wnat the scrip to run for (Name must be exactly the same as the model)
+3. Place the BIOS file in that folder with a txt file called version.txt, In the txt file write the version of the bios file
+
+Error codes 
+268: Could not mount BIOS file location
+256: An Error ocured when trying to copy files to PE location
+1: Could not Flash the BIOS
+20: BIOS dosnt need to be updated
+2: Reboot is needed 
+0: success
 
 .PARAMETER Password
-The password of the service account used to connect to the location of the BIOS files
+Password for the account used to connect to your content library
 
-.PARAMETER Log
-Path to the log file 
+.PARAMETER AccessAccount
+Account used to connect to the content library 
+
+.PARAMETER Log 
+Path to the log file
 
 .NOTES
-This script is part of the SCCM Task Sequence GUI 
-You will need to download the Flash64W.exe utility before you use it 
-http://en.community.dell.com/techcenter/enterprise-client/w/wiki/12237.64-bit-bios-installation-utility
-
-1. Create a Folder in your Content Library called FlashBIOS
-2. Create a Folder called Script, Copy this script to that folder
-3. Create a Folder in the FlashBIOS folder Called Flash64W
-4. Download the Flash64W utility and place it in the Flash64W folder 
-5. Create a package for the script file and do not create a program for it 
-6. Create a task in your TS for running a command line, Command Line: %SYSTEMROOT%\System32\WindowsPowerShell\v1.0\powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -Command ".\FlashBios.ps1 -AccessAccount Domain\User -Password PASSWORD"
-7. Check the box for a Package and point it to the package you created for the script 
-8. If you only want the script to run for a specific model add an option for a wmi query: Select * FROM Win32_ComputerSystem WHERE Model = 'Latitude 5590'
-9. Create a Reboot task, add an option for a TS veriable, Variable: SMSTS_BiosUpdateRebootRequired  Condition: True  Value: True
-
-For each computer model that you want to update the BIOS on create a folder in the FlashBIOS folder exactly what the model is
-Place the exe file in the folder and create a Version.txt file containg the BIOS version number of the exe 
-
 Created By: Kris Gross
 Contact: Krisgross@sccmtst.com
 Twitter: @kmgamd
@@ -39,34 +37,39 @@ You can get updates to this script and others from here
 http://www.sccmtst.com/
 #>
 
+
 PARAM(
-    [string]$AccessAccount,
     [String]$Password,
-    [String]$Log = "$Env:SystemDrive\FlashBIOS.txt"
+    [String]$Log = "$Env:SystemDrive\FlashBIOS.txt",
+    [string]$AccessAccount
 )
 
+#Creates the object for a SCCM TS Variable
 $tsenv = New-Object -COMObject Microsoft.SMS.TSEnvironment -ErrorAction SilentlyContinue
 $tsenv.Value("SMSTS_BiosUpdate") = "True"
 
 $BIOSVersion = (Get-WmiObject win32_BIOS).name 
 $ComputerModel = (Get-WmiObject win32_ComputerSystem).Model
-$BIOSFilePath = "\\it-cmmp\ContentLibrary\BIOS"
+#Path to where BIOS files are held
+$BIOSFilePath = "\\ServerName\ContentLibrary\DellBIOS"
 
 Net use J: $BIOSFilePath /user:$AccessAccount $Password 
 IF ($LASTEXITCODE -eq 1)
 {
     Write-Error "Could not mount BIOS loaction:$_"
     Add-Content $Log "Could not mount BIOS loaction:$_"
-    $host.SetShouldExit(268)
+    #Writes exist the script in a way that allows sccm to see the exit code 
+    [System.Environment]::Exit(268)
 }
 
 $FlashBIOSVersion = Get-Content "J:\$ComputerModel\Version.txt"
+$FlashBIOSVersion = $FlashBIOSVersion.Trim()
 
 IF ($BIOSVersion -ge  $FlashBIOSVersion) 
 {
     Write-Host "BIOS dosnt need to be updated"
     Add-Content $Log "BIOS dosnt need to be updated"
-    $host.SetShouldExit(20)
+    [System.Environment]::Exit(20)
 }
 
 IF ($BIOSVersion -lt $FlashBIOSVersion)
@@ -74,7 +77,7 @@ IF ($BIOSVersion -lt $FlashBIOSVersion)
     Write-Host "BIOS needs updated"
     Add-Content $Log "BIOS needs updated"
     
-    # $FlashBIOSFile = Get-ChildItem "J:\$ComputerModel\*.exe"
+    
     $BiosFileName = Get-ChildItem "J:\$ComputerModel\*.exe" -Verbose | Select-Object -ExpandProperty Name
     $Commands = "/b=$PSScriptroot\FlashBIOS\$BiosFileName /s /p=$BiosPassword /l=$LogPath\$BiosLogFileName"
     
@@ -86,7 +89,7 @@ IF ($BIOSVersion -lt $FlashBIOSVersion)
     catch {
         Write-Error "$_"
         Add-Content $Log "Could not copy files: $_"
-        $host.SetShouldExit(256)
+        [System.Environment]::Exit(256)
     }
 
     $Run = Start-Process $PSScriptRoot\FlashBIOS\Flash64W.exe -ArgumentList $Commands -PassThru -Wait 
@@ -96,20 +99,20 @@ IF ($BIOSVersion -lt $FlashBIOSVersion)
 If ($Run.ExitCode -eq 2) 
 {
     $tsenv.Value("SMSTS_BiosUpdateRebootRequired") = "True"
-    $host.SetShouldExit(0)
+    [System.Environment]::Exit(2)
 } 
 else 
 { 
     $tsenv.Value("SMSTS_BiosUpdateRebootRequired") = "False"
 }
 
-If ($Run.ExitCode -eq 0) {$host.SetShouldExit(0)}
+If ($Run.ExitCode -eq 0) {[System.Environment]::Exit(0)}
 
 If ($Run.ExitCode -eq 1) 
 {
     Write-Error "Could not Flash BIOS: $_"
     Add-Content $Log "Could not Flash BIOS: $_"
-    $host.SetShouldExit(263)
+    [System.Environment]::Exit(1)
 }
 
 Start-Sleep -Seconds 45
